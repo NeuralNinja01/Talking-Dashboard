@@ -80,16 +80,22 @@ if 'df' in st.session_state:
                 # Chart i
                 if i < len(results):
                     with cols[0]:
-                        st.markdown(f"#### {results[i]['story']}")
-                        st.caption(results[i]['description'])
-                        st.plotly_chart(results[i]['figure'], use_container_width=True)
+                        try:
+                            st.markdown(f"#### {results[i]['story']}")
+                            st.caption(results[i]['description'])
+                            st.plotly_chart(results[i]['figure'], use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Could not render chart: {str(e)[:100]}")
                 
                 # Chart i+1
                 if i + 1 < len(results):
                     with cols[1]:
-                        st.markdown(f"#### {results[i+1]['story']}")
-                        st.caption(results[i+1]['description'])
-                        st.plotly_chart(results[i+1]['figure'], use_container_width=True)
+                        try:
+                            st.markdown(f"#### {results[i+1]['story']}")
+                            st.caption(results[i+1]['description'])
+                            st.plotly_chart(results[i+1]['figure'], use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Could not render chart: {str(e)[:100]}")
         else:
             st.warning("No visualizations could be generated.")
             
@@ -157,3 +163,4 @@ if 'df' in st.session_state:
 
 else:
     st.info("Please upload a dataset to begin.")
+

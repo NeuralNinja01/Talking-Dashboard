@@ -157,20 +157,72 @@ class VizArchitect(GroqClient):
                                 "figure": fig
                             })
                         except (TypeError, ValueError) as json_err:
-                            print(f"Chart {i+1} is not JSON serializable: {json_err}")
-                            # Try to fix by recreating the figure
+                            print(f"Chart {i+1} serialization failed: {json_err}")
+                            # Try multiple fix strategies
+                            fixed = False
+                            
+                            # Strategy 1: Convert to dict and back
                             try:
-                                # Convert to dict and back to clean the figure
                                 fig_dict = fig.to_dict()
                                 clean_fig = go.Figure(fig_dict)
+                                pio.to_json(clean_fig, validate=False)
                                 results.append({
                                     "story": chart['story'],
                                     "description": chart['description'],
                                     "figure": clean_fig
                                 })
-                            except Exception as fix_err:
-                                print(f"Could not fix chart {i+1}: {fix_err}")
-                                continue
+                                fixed = True
+                                print(f"Chart {i+1} fixed with strategy 1")
+                            except Exception:
+                                pass
+                            
+                            # Strategy 2: Recreate with plotly express if strategy 1 failed
+                            if not fixed:
+                                try:
+                                    # Try to re-execute the code with fresh context
+                                    retry_vars = {'df': df, 'px': px, 'go': go, 'pd': pd}
+                                    exec(chart['code'], {}, retry_vars)
+                                    retry_fig = retry_vars.get(f"fig{i+1}") or retry_vars.get('fig')
+                                    
+                                    if retry_fig:
+                                        # Update layout to ensure JSON compatibility
+                                        retry_fig.update_layout(template="plotly_dark")
+                                        pio.to_json(retry_fig, validate=False)
+                                        results.append({
+                                            "story": chart['story'],
+                                            "description": chart['description'],
+                                            "figure": retry_fig
+                                        })
+                                        fixed = True
+                                        print(f"Chart {i+1} fixed with strategy 2")
+                                except Exception as e2:
+                                    print(f"Chart {i+1} strategy 2 failed: {e2}")
+                            
+                            # Strategy 3: Create a simple fallback chart
+                            if not fixed:
+                                try:
+                                    # Create a simple text-based figure as fallback
+                                    fallback_fig = go.Figure()
+                                    fallback_fig.add_annotation(
+                                        text=f"Chart rendering failed<br>{chart['story']}",
+                                        xref="paper", yref="paper",
+                                        x=0.5, y=0.5, showarrow=False,
+                                        font=dict(size=14, color="white")
+                                    )
+                                    fallback_fig.update_layout(
+                                        template="plotly_dark",
+                                        height=300,
+                                        showlegend=False
+                                    )
+                                    results.append({
+                                        "story": chart['story'],
+                                        "description": "Visualization could not be rendered. " + chart['description'],
+                                        "figure": fallback_fig
+                                    })
+                                    print(f"Chart {i+1} using fallback")
+                                except Exception as e3:
+                                    print(f"Chart {i+1} all strategies failed: {e3}")
+                                    continue
                 except Exception as e:
                     print(f"Error generating chart {i+1}: {e}")
                     continue
@@ -185,18 +237,52 @@ class VizArchitect(GroqClient):
 class TalkingRabbit(GroqClient):
     def __init__(self, api_key):
         super().__init__(api_key)
+        self.conversation_history = []
 
-    def ask_question(self, df: pd.DataFrame, question: str):
+    def ask_question(self, df: pd.DataFrame, question: str, conversation_history=None):
         """
-        Converts natural language question to Pandas query, executes it, and synthesizes an answer.
+        Converts natural language question to analysis, with conversation memory.
+        Can generate text answers OR visualizations based on the question.
         """
+        if conversation_history is None:
+            conversation_history = self.conversation_history
+            
         columns = df.columns.tolist()
         dtypes = df.dtypes.astype(str).to_dict()
         head = df.head(3).to_string()
+        
+        # Build conversation context
+        context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history[-5:]])  # Last 5 messages
 
+        # First, determine if user wants a visualization
+        intent_prompt = f"""
+        Analyze this user question and determine if they want a VISUALIZATION or just a TEXT answer.
+        
+        User Question: "{question}"
+        
+        Return ONLY one word: "VISUALIZATION" or "TEXT"
+        
+        Keywords for visualization: chart, plot, graph, visualize, show me, display, draw
+        """
+        
+        intent = self.get_completion(intent_prompt, system_message="You are a classification expert.").strip().upper()
+        
+        if "VISUALIZATION" in intent or "VIZ" in intent:
+            # Generate visualization
+            return self._generate_visualization(df, question, context, columns, dtypes, head)
+        else:
+            # Generate text answer
+            return self._generate_text_answer(df, question, context, columns, dtypes, head)
+    
+    def _generate_text_answer(self, df, question, context, columns, dtypes, head):
+        """Generate a text-based answer with Pandas code."""
         prompt = f"""
         You are an expert Data Analyst named "Talking Rabbit".
-        User Question: "{question}"
+        
+        Conversation History:
+        {context}
+        
+        Current User Question: "{question}"
 
         Dataset Metadata:
         Columns: {columns}
@@ -209,7 +295,7 @@ class TalkingRabbit(GroqClient):
            - Assume the dataframe is named `df`.
            - Store the result in a variable named `result`.
            - The query should be a single executable line or block.
-        2. Execute the query (I will do this part, you just provide the code).
+        2. Consider the conversation history for context.
         
         Output Format:
         Return ONLY the Python code. Do not wrap in markdown. Do not include print statements.
@@ -222,21 +308,114 @@ class TalkingRabbit(GroqClient):
         code_response = code_response.replace("```python", "").replace("```", "").strip()
 
         try:
-            local_vars = {'df': df}
+            local_vars = {'df': df, 'pd': pd}
             exec(code_response, {}, local_vars)
             result_val = local_vars.get('result')
             
             # Synthesize answer
             synthesis_prompt = f"""
+            Conversation History:
+            {context}
+            
             User Question: "{question}"
             Data Analysis Result: {result_val}
             
             Task: Provide a natural language answer to the user's question based on the result.
-            Keep it professional, concise, and friendly.
+            Keep it professional, concise, and friendly. Reference previous conversation if relevant.
             """
             answer = self.get_completion(synthesis_prompt, system_message="You are a helpful Data Analyst.")
-            return answer, code_response
+            
+            return {
+                "type": "text",
+                "answer": answer,
+                "code": code_response,
+                "figure": None
+            }
             
         except Exception as e:
-            return f"I couldn't analyze that. Error: {e}", code_response
+            return {
+                "type": "text",
+                "answer": f"I couldn't analyze that. Error: {e}",
+                "code": code_response,
+                "figure": None
+            }
+    
+    def _generate_visualization(self, df, question, context, columns, dtypes, head):
+        """Generate a visualization based on the question."""
+        prompt = f"""
+        You are an expert Data Visualization specialist.
+        
+        Conversation History:
+        {context}
+        
+        Current User Question: "{question}"
+        
+        Dataset Metadata:
+        Columns: {columns}
+        Data Types: {dtypes}
+        Sample Data:
+        {head}
+
+        Your Task:
+        Generate Python code using Plotly Express (`px`) to create the requested visualization.
+        - The dataframe is named `df`.
+        - The figure object must be named `fig`.
+        - Choose the appropriate chart type based on the question.
+        - Add proper titles and labels.
+        
+        Output Format:
+        Return ONLY the Python code. Do not wrap in markdown.
+        Example: fig = px.bar(df, x='Category', y='Sales', title='Sales by Category')
+        """
+
+        code_response = self.get_completion(prompt, system_message="You are a Plotly visualization expert. Output ONLY code.")
+        
+        # Clean code response
+        code_response = code_response.replace("```python", "").replace("```", "").strip()
+
+        try:
+            local_vars = {'df': df, 'px': px, 'go': go, 'pd': pd}
+            exec(code_response, {}, local_vars)
+            fig = local_vars.get('fig')
+            
+            if fig:
+                # Validate JSON serialization
+                try:
+                    import plotly.io as pio
+                    pio.to_json(fig, validate=False)
+                except (TypeError, ValueError):
+                    # Try to clean the figure
+                    fig_dict = fig.to_dict()
+                    fig = go.Figure(fig_dict)
+                
+                # Generate description
+                desc_prompt = f"""
+                User asked: "{question}"
+                A visualization was created.
+                
+                Provide a brief 1-sentence description of what the chart shows.
+                """
+                description = self.get_completion(desc_prompt, system_message="You are concise.")
+                
+                return {
+                    "type": "visualization",
+                    "answer": description,
+                    "code": code_response,
+                    "figure": fig
+                }
+            else:
+                return {
+                    "type": "text",
+                    "answer": "I couldn't generate the visualization. Please try rephrasing your request.",
+                    "code": code_response,
+                    "figure": None
+                }
+                
+        except Exception as e:
+            return {
+                "type": "text",
+                "answer": f"I couldn't create the visualization. Error: {e}",
+                "code": code_response,
+                "figure": None
+            }
 

@@ -145,11 +145,32 @@ class VizArchitect(GroqClient):
                          fig = local_vars.get('fig')
 
                     if fig:
-                        results.append({
-                            "story": chart['story'],
-                            "description": chart['description'],
-                            "figure": fig
-                        })
+                        # Validate that the figure is JSON-serializable
+                        try:
+                            # Test serialization before adding to results
+                            import plotly.io as pio
+                            pio.to_json(fig, validate=False)
+                            
+                            results.append({
+                                "story": chart['story'],
+                                "description": chart['description'],
+                                "figure": fig
+                            })
+                        except (TypeError, ValueError) as json_err:
+                            print(f"Chart {i+1} is not JSON serializable: {json_err}")
+                            # Try to fix by recreating the figure
+                            try:
+                                # Convert to dict and back to clean the figure
+                                fig_dict = fig.to_dict()
+                                clean_fig = go.Figure(fig_dict)
+                                results.append({
+                                    "story": chart['story'],
+                                    "description": chart['description'],
+                                    "figure": clean_fig
+                                })
+                            except Exception as fix_err:
+                                print(f"Could not fix chart {i+1}: {fix_err}")
+                                continue
                 except Exception as e:
                     print(f"Error generating chart {i+1}: {e}")
                     continue
@@ -218,3 +239,4 @@ class TalkingRabbit(GroqClient):
             
         except Exception as e:
             return f"I couldn't analyze that. Error: {e}", code_response
+

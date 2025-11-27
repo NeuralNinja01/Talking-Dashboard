@@ -103,6 +103,44 @@ def inject_custom_css():
         ::-webkit-scrollbar-thumb:hover {
             background: #58a6ff; 
         }
+        
+        /* Chat Interface Styles */
+        .chat-container {
+            height: calc(100vh - 200px);
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .chat-message {
+            padding: 15px;
+            border-radius: 15px;
+            margin-bottom: 10px;
+            max-width: 85%;
+            word-wrap: break-word;
+        }
+        
+        .user-message {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            margin-left: auto;
+            color: white;
+        }
+        
+        .assistant-message {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-right: auto;
+        }
+        
+        .chat-input-container {
+            position: sticky;
+            bottom: 0;
+            background: #0e1117;
+            padding: 15px 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -117,3 +155,29 @@ def render_header():
         </p>
     </div>
     """, unsafe_allow_html=True)
+
+def render_chat_message(message, key_prefix=""):
+    """Render a single chat message with text, code, and optional visualization."""
+    role = message.get("role", "user")
+    content = message.get("content", "")
+    code = message.get("code")
+    figure = message.get("figure")
+    
+    # Determine message class
+    msg_class = "user-message" if role == "user" else "assistant-message"
+    
+    # Render message bubble
+    st.markdown(f'<div class="chat-message {msg_class}">{content}</div>', unsafe_allow_html=True)
+    
+    # Render code if present (only for assistant)
+    if role == "assistant" and code:
+        with st.expander("📝 View Code", expanded=False):
+            st.code(code, language="python")
+    
+    # Render figure if present (only for assistant)
+    if role == "assistant" and figure:
+        try:
+            st.plotly_chart(figure, use_container_width=True, key=f"{key_prefix}_chart")
+        except Exception as e:
+            st.error(f"Could not render chart: {str(e)[:100]}")
+

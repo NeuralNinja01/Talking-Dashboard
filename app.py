@@ -12,7 +12,7 @@ st.set_page_config(page_title="Talking Rabbit", layout="wide", page_icon="🐰")
 
 # --- Initialize Agents ---
 # Ideally, use st.secrets. For this deliverable, we use the provided key or placeholder.
-API_KEY = "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"
+API_KEY = "Use your own API key"
 
 if 'janitor' not in st.session_state:
     st.session_state.janitor = DataJanitor()
@@ -248,6 +248,7 @@ if 'df' in st.session_state and st.session_state.get('chat_open', False):
             st.session_state.last_input = ""
             st.session_state.input_key += 1
             st.rerun()
+
 
 
 
